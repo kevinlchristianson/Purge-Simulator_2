@@ -1,61 +1,130 @@
+"""Developer launcher for the legacy Purge Wizard pages.
+
+This app is intentionally lightweight: it helps you open each existing page in one
+window so you can quickly see what still works while rebuilding the full wizard
+flow around the newer simulation engine.
+"""
+
 import sys
-from PySide6.QtWidgets import QApplication, QMainWindow, QStackedWidget
+from dataclasses import dataclass
+from typing import Callable, List
 
-# Import your wizard pages (1–6)
-from page1 import Page1
-from page2 import Page2
-from page3 import Page3
-from page4 import Page4
-from page5 import Page5
-from page6 import Page6
+from PySide6.QtWidgets import (
+    QApplication,
+    QLabel,
+    QListWidget,
+    QMainWindow,
+    QMessageBox,
+    QPushButton,
+    QStackedWidget,
+    QVBoxLayout,
+    QWidget,
+    QHBoxLayout,
+)
 
-# Shared state object to hold all inputs
-class WizardState:
-    def __init__(self):
-        self.data = {}
+from page2_pipe import PipePage
+from page3_profile import ProfilePage
+from page4_purgesetup import PurgeSetupPage
+from page5_simulationsetup import SimulationSetupPage, NitrogenSetupPage
 
-class WizardController(QMainWindow):
+
+@dataclass
+class WizardSection:
+    """Metadata for one page loaded into the development launcher."""
+
+    title: str
+    description: str
+    factory: Callable[[], QWidget]
+
+
+class WizardDevLauncher(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Pipeline Purging Simulator Wizard")
-        self.resize(1200, 800)
+        self.setWindowTitle("Purge Wizard Rebuild Launcher")
+        self.resize(1300, 850)
 
-        # Shared state
-        self.state = WizardState()
-
-        # Central stacked widget for wizard pages
-        self.stack = QStackedWidget()
-        self.setCentralWidget(self.stack)
-
-        # Initialize pages
-        self.pages = [
-            Page1(self.state, self.next_page, self.prev_page),
-            Page2(self.state, self.next_page, self.prev_page),
-            Page3(self.state, self.next_page, self.prev_page),
-            Page4(self.state, self.next_page, self.prev_page),
-            Page5(self.state, self.next_page, self.prev_page),
-            Page6(self.state, self.next_page, self.prev_page),
+        sections: List[WizardSection] = [
+            WizardSection(
+                title="1) Pipe & Fluid Inputs",
+                description="Collect line geometry, roughness, and fluid properties.",
+                factory=PipePage,
+            ),
+            WizardSection(
+                title="2) Profile Loader",
+                description="Load and validate profile files before purge setup.",
+                factory=ProfilePage,
+            ),
+            WizardSection(
+                title="3) Purge Setup",
+                description="Define purge window and endpoint behavior.",
+                factory=PurgeSetupPage,
+            ),
+            WizardSection(
+                title="4) Simulation Setup",
+                description="Configure pressure and speed constraints for run logic.",
+                factory=SimulationSetupPage,
+            ),
+            WizardSection(
+                title="5) Nitrogen Setup",
+                description="Set N₂ supply assumptions and gas conditions.",
+                factory=NitrogenSetupPage,
+            ),
         ]
 
-        # Add to stack
-        for page in self.pages:
-            self.stack.addWidget(page)
+        root = QWidget()
+        self.setCentralWidget(root)
 
-        # Start on page 1
-        self.stack.setCurrentIndex(0)
+        layout = QHBoxLayout(root)
 
-    def next_page(self):
-        current = self.stack.currentIndex()
-        if current < len(self.pages) - 1:
-            self.stack.setCurrentIndex(current + 1)
+        left = QVBoxLayout()
+        self.page_list = QListWidget()
+        self.page_list.currentRowChanged.connect(self.on_page_changed)
+        left.addWidget(QLabel("Legacy Wizard Sections"))
+        left.addWidget(self.page_list)
 
-    def prev_page(self):
-        current = self.stack.currentIndex()
-        if current > 0:
-            self.stack.setCurrentIndex(current - 1)
+        self.open_help_btn = QPushButton("How to rebuild this wizard")
+        self.open_help_btn.clicked.connect(self.show_rebuild_help)
+        left.addWidget(self.open_help_btn)
+
+        layout.addLayout(left, stretch=1)
+
+        right = QVBoxLayout()
+        self.description_label = QLabel()
+        self.description_label.setWordWrap(True)
+        right.addWidget(self.description_label)
+
+        self.stack = QStackedWidget()
+        right.addWidget(self.stack)
+
+        layout.addLayout(right, stretch=4)
+
+        self.sections = sections
+        for section in self.sections:
+            self.page_list.addItem(section.title)
+            self.stack.addWidget(section.factory())
+
+        self.page_list.setCurrentRow(0)
+
+    def on_page_changed(self, index: int):
+        if index < 0 or index >= len(self.sections):
+            return
+        self.stack.setCurrentIndex(index)
+        self.description_label.setText(self.sections[index].description)
+
+    def show_rebuild_help(self):
+        QMessageBox.information(
+            self,
+            "Wizard rebuild checklist",
+            "1) Make each page return a clean data dictionary.\n"
+            "2) Store that dictionary in a shared state object.\n"
+            "3) Connect Next/Back navigation with input validation.\n"
+            "4) Move simulation math calls to page6_summary.py (engine module).\n"
+            "5) Add one integration test path from page 1 to results export.",
+        )
+
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
-    window = WizardController()
+    window = WizardDevLauncher()
     window.show()
     sys.exit(app.exec())
