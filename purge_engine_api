@@ -1,0 +1,56 @@
+"""Thin, stable API for running the purge simulation engine.
+
+This version is intended to live in your repo as `purge_engine_api.py` and import
+the monolith module by its ORIGINAL filename (after you apply the import-safe patch).
+"""
+
+from __future__ import annotations
+
+import importlib
+from typing import Any, Dict, Optional, Sequence
+
+_MONOLITH_MODULE = "Purge_Modeling_Program_profile_invert_append_preview_patched_v25_auto_bins_and_export_formatting"
+
+
+def run_purge_simulation(
+    inputs: Dict[str, Any],
+    purge_mileposts: Sequence[float],
+    elevations: Sequence[float],
+    system_mileposts: Optional[Sequence[float]] = None,
+    system_elevations: Optional[Sequence[float]] = None,
+    dialog_root: Any = None,
+    configure_logging: bool = False,
+) -> Dict[str, Any]:
+    """Run the purge simulation.
+
+    Args:
+        inputs: Dictionary of simulation configuration (pipe, fluid, constraints, nitrogen, etc.).
+        purge_mileposts/elevations: Profile arrays for the PURGE section.
+        system_mileposts/system_elevations: Profile arrays for the FULL hydraulic system. If omitted, uses purge arrays.
+        dialog_root: Optional Tk root used only if the engine tries to show Tk dialogs (avoid if possible).
+        configure_logging: If True, calls monolith.configure_logging() before running.
+
+    Returns:
+        Dict with time-series arrays + summary metrics + alarms (as produced by the engine).
+    """
+    mod = importlib.import_module(_MONOLITH_MODULE)
+
+    if configure_logging and hasattr(mod, "configure_logging"):
+        mod.configure_logging()
+
+    if system_mileposts is None:
+        system_mileposts = purge_mileposts
+    if system_elevations is None:
+        system_elevations = elevations
+
+    if not hasattr(mod, "run_simulation"):
+        raise AttributeError(f"Monolith module missing run_simulation(): {_MONOLITH_MODULE}")
+
+    return mod.run_simulation(
+        dialog_root,
+        inputs,
+        list(purge_mileposts),
+        list(elevations),
+        list(system_mileposts),
+        list(system_elevations),
+    )
