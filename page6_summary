@@ -1,0 +1,90 @@
+"""Purge Pipeline Simulator — Engine Proxy
+
+This file keeps the original wizard-facing API:
+
+    run_simulation(inputs, mileposts, elevations) -> results_dict
+    simulate_pipeline(inputs, profile_df) -> results_dict
+
+Under the hood, it delegates to `purge_engine_api.run_purge_simulation`, which in turn
+calls the monolithic simulation engine.
+
+Why this exists:
+- The wizard code can keep importing page6_summary.run_simulation()
+- You can swap the underlying engine without rewriting the UI today
+"""
+
+from __future__ import annotations
+
+from typing import Any, Dict
+
+import numpy as np
+
+# IMPORTANT: in your repo, rename purge_engine_api_REPO.py -> purge_engine_api.py
+from purge_engine_api import run_purge_simulation
+
+
+def _as_float(x: Any, default: float | None = None) -> float | None:
+    try:
+        if x is None:
+            return default
+        if isinstance(x, str) and not x.strip():
+            return default
+        return float(x)
+    except Exception:
+        return default
+
+
+def run_simulation(inputs: Dict[str, Any], mileposts, elevations) -> Dict[str, Any]:
+    """Wizard-facing run function.
+
+    - `mileposts`/`elevations` should represent the FULL system profile.
+    - We slice the purge window out of the system profile using inputs:
+        purge_start_mp, purge_end_mp
+    """
+    mp = np.asarray(mileposts, dtype=float)
+    el = np.asarray(elevations, dtype=float)
+    if mp.size != el.size:
+        raise ValueError("mileposts and elevations must have the same length")
+
+    # Ensure sorted by milepost (engine expects monotonic)
+    if mp.size >= 2 and np.any(np.diff(mp) < 0):
+        order = np.argsort(mp)
+        mp = mp[order]
+        el = el[order]
+
+    purge_start = _as_float(inputs.get("purge_start_mp"), float(mp.min()))
+    purge_end = _as_float(inputs.get("purge_end_mp"), float(mp.max()))
+    if purge_start is None:
+        purge_start = float(mp.min())
+    if purge_end is None:
+        purge_end = float(mp.max())
+
+    lo, hi = (purge_start, purge_end) if purge_start <= purge_end else (purge_end, purge_start)
+    mask = (mp >= lo) & (mp <= hi)
+    if not np.any(mask):
+        # fallback: pass whole profile if slicing doesn't hit anything
+        purge_mp = mp
+        purge_el = el
+    else:
+        purge_mp = mp[mask]
+        purge_el = el[mask]
+
+    # Delegate to monolith engine via API:
+    return run_purge_simulation(
+        inputs=inputs,
+        purge_mileposts=purge_mp.tolist(),
+        elevations=purge_el.tolist(),
+        system_mileposts=mp.tolist(),
+        system_elevations=el.tolist(),
+        dialog_root=None,
+        configure_logging=False,
+    )
+
+
+def simulate_pipeline(inputs: Dict[str, Any], profile_df) -> Dict[str, Any]:
+    """Convenience wrapper for DataFrames with columns ['Milepost','Elevation']."""
+    if not hasattr(profile_df, "__getitem__"):
+        raise TypeError("profile_df must be a pandas-like object with columns")
+    mp = np.asarray(profile_df["Milepost"], dtype=float)
+    el = np.asarray(profile_df["Elevation"], dtype=float)
+    return run_simulation(inputs, mp, el)
